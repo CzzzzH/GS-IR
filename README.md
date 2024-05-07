@@ -22,8 +22,7 @@ create the basic environment
 ```sh
 conda env create --file environment.yml
 conda activate gsir
-
-pip install kornia
+pip install -r requirements.txt
 ```
 
 install some extensions
@@ -31,11 +30,10 @@ install some extensions
 cd gs-ir && python setup.py develop && cd ..
 
 cd submodules
-git clone https://github.com/NVlabs/nvdiffrast
 pip install ./nvdiffrast
-
 pip install ./simple-knn
-pip install ./diff-gaussian-rasterization # or cd ./diff-gaussian-rasterization && python setup.py develop && cd ../..
+cd ./diff-gaussian-rasterization && python setup.py develop && cd ../..
+
 ```
 
 ## Dataset

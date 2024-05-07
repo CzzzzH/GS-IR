@@ -1,0 +1,9 @@
+trimesh
+scipy
+opencv-python
+matplotlib
+tensorboard
+kornia
+imageio
+lpips
+Ninja
