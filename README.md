@@ -32,8 +32,7 @@ cd gs-ir && python setup.py develop && cd ..
 cd submodules
 pip install ./nvdiffrast
 pip install ./simple-knn
-cd ./diff-gaussian-rasterization && python setup.py develop && cd ../..
-
+pip install ./diff-surfel-rasterization
 ```
 
 ## Dataset
