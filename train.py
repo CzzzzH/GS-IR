@@ -137,6 +137,7 @@ def training(
     bound: float = 1.5,
     indirect: bool = False,
 ) -> None:
+    
     first_iter = 0
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
@@ -150,24 +151,25 @@ def training(
     iter_end = torch.cuda.Event(enable_timing=True)
 
     # NOTE: prepare for PBR
-    brdf_lut = get_brdf_lut().cuda()
-    envmap_dirs = get_envmap_dirs()
-    cubemap = CubemapLight(base_res=256).cuda()
-    cubemap.train()
-    aabb = torch.tensor([-bound, -bound, -bound, bound, bound, bound]).cuda()
-    irradiance_volumes = IrradianceVolumes(aabb=aabb).cuda()
-    irradiance_volumes.train()
-    param_groups = [
-        {
-            "name": "irradiance_volumes",
-            "params": irradiance_volumes.parameters(),
-            "lr": opt.opacity_lr,
-        },
-        {"name": "cubemap", "params": cubemap.parameters(), "lr": opt.opacity_lr},
-    ]
-    light_optimizer = torch.optim.Adam(param_groups, lr=opt.opacity_lr)
+    
+    # brdf_lut = get_brdf_lut().cuda()
+    # envmap_dirs = get_envmap_dirs()
+    # cubemap = CubemapLight(base_res=256).cuda()
+    # cubemap.train()
+    # aabb = torch.tensor([-bound, -bound, -bound, bound, bound, bound]).cuda()
+    # irradiance_volumes = IrradianceVolumes(aabb=aabb).cuda()
+    # irradiance_volumes.train()
+    # param_groups = [
+    #     {
+    #         "name": "irradiance_volumes",
+    #         "params": irradiance_volumes.parameters(),
+    #         "lr": opt.opacity_lr,
+    #     },
+    #     {"name": "cubemap", "params": cubemap.parameters(), "lr": opt.opacity_lr},
+    # ]
+    # light_optimizer = torch.optim.Adam(param_groups, lr=opt.opacity_lr)
 
-    canonical_rays = scene.get_canonical_rays()
+    # canonical_rays = scene.get_canonical_rays()
 
     # load checkpoint
     if checkpoint_path:
@@ -195,6 +197,7 @@ def training(
     occlusion_degree: int
     bound: float
     aabb: torch.Tensor
+    
     for iteration in range(first_iter + 1, opt.iterations + 1):  # the real iteration (1 shift)
         iter_start.record()
 
@@ -221,6 +224,8 @@ def training(
             background = bg
         else:  # NOTE: black background for PBR
             background = torch.zeros_like(bg)
+        
+        
         rendering_result = render(
             viewpoint_camera=viewpoint_cam,
             pc=gaussians,
@@ -228,6 +233,9 @@ def training(
             bg_color=background,
             derive_normal=True,
         )
+        print(rendering_result)
+        rendering_result.stop()
+        
         image = rendering_result["render"]  # [3, H, W]
         viewspace_point_tensor = rendering_result["viewspace_points"]
         visibility_filter = rendering_result["visibility_filter"]

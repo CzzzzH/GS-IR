@@ -82,7 +82,8 @@ def cameraList_from_camInfos(
 
     for id, c in enumerate(tqdm(cam_infos)):
         camera_list.append(loadCam(args, id, c, resolution_scale))
-
+        break
+    
     return camera_list
 
 

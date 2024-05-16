@@ -13,13 +13,43 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+# from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 
 from arguments import GroupParams
 from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
+def depths_to_points(view, depthmap):
+    c2w = (view.world_view_transform.T).inverse()
+    W, H = view.image_width, view.image_height
+    fx = W / (2 * math.tan(view.FoVx / 2.))
+    fy = H / (2 * math.tan(view.FoVy / 2.))
+    intrins = torch.tensor(
+        [[fx, 0., W/2.],
+        [0., fy, H/2.],
+        [0., 0., 1.0]]
+    ).float().cuda()
+    grid_x, grid_y = torch.meshgrid(torch.arange(W, device='cuda').float(), torch.arange(H, device='cuda').float(), indexing='xy')
+    points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=-1).reshape(-1, 3)
+    rays_d = points @ intrins.inverse().T @ c2w[:3,:3].T
+    rays_o = c2w[:3,3]
+    points = depthmap.reshape(-1, 1) * rays_d + rays_o
+    return points
+
+def depth_to_normal(view, depth):
+    """
+        view: view camera
+        depth: depthmap 
+    """
+    points = depths_to_points(view, depth).reshape(*depth.shape[1:], 3)
+    output = torch.zeros_like(points)
+    dx = torch.cat([points[2:, 1:-1] - points[:-2, 1:-1]], dim=0)
+    dy = torch.cat([points[1:-1, 2:] - points[1:-1, :-2]], dim=1)
+    normal_map = torch.nn.functional.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+    output[1:-1, 1:-1, :] = normal_map
+    return output
 
 def render(
     viewpoint_camera: Camera,
@@ -51,6 +81,22 @@ def render(
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
+    # raster_settings = GaussianRasterizationSettings(
+    #     image_height=int(viewpoint_camera.image_height),
+    #     image_width=int(viewpoint_camera.image_width),
+    #     tanfovx=tanfovx,
+    #     tanfovy=tanfovy,
+    #     bg=bg_color,
+    #     scale_modifier=scaling_modifier,
+    #     viewmatrix=viewpoint_camera.world_view_transform,
+    #     projmatrix=viewpoint_camera.full_proj_transform,
+    #     sh_degree=pc.active_sh_degree,
+    #     campos=viewpoint_camera.camera_center,
+    #     prefiltered=False,
+    #     debug=pipe.debug,
+    #     inference=inference,
+    #     argmax_depth=False,
+    # )
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
@@ -63,9 +109,7 @@ def render(
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=pipe.debug,
-        inference=inference,
-        argmax_depth=False,
+        debug=False,
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -73,7 +117,8 @@ def render(
     means3D = pc.get_xyz
     means2D = screenspace_points
     opacity = pc.get_opacity
-    normal = pc.get_normal
+    
+    # normal = pc.get_normal
     albedo = pc.get_albedo
     roughness = pc.get_roughness
     metallic = pc.get_metallic
@@ -85,7 +130,16 @@ def render(
     rotations = None
     cov3D_precomp = None
     if pipe.compute_cov3D_python:
-        cov3D_precomp = pc.get_covariance(scaling_modifier)
+        splat2world = pc.get_covariance(scaling_modifier)
+        W, H = viewpoint_camera.image_width, viewpoint_camera.image_height
+        near, far = viewpoint_camera.znear, viewpoint_camera.zfar
+        ndc2pix = torch.tensor([
+            [W / 2, 0, 0, (W-1) / 2],
+            [0, H / 2, 0, (H-1) / 2],
+            [0, 0, far-near, near],
+            [0, 0, 0, 1]]).float().cuda().T
+        world2pix =  viewpoint_camera.full_proj_transform @ ndc2pix
+        cov3D_precomp = (splat2world[:, [0,1,3]] @ world2pix[:,[0,1,3]]).permute(0,2,1).reshape(-1, 9) # column major
     else:
         scales = pc.get_scaling
         rotations = pc.get_rotation
@@ -107,75 +161,83 @@ def render(
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    (
-        rendered_image,
-        radii,
-        opacity_map,
-        depth_map,
-        normal_map_from_depth,
-        normal_map,
-        albedo_map,
-        roughness_map,
-        metallic_map,
-    ) = rasterizer(
+    rendered_image, radii, allmap = rasterizer(
         means3D=means3D,
         means2D=means2D,
-        opacities=opacity,
-        normal=normal,
         shs=shs,
         colors_precomp=colors_precomp,
+        opacities=opacity,
         albedo=albedo,
         roughness=roughness,
         metallic=metallic,
         scales=scales,
         rotations=rotations,
-        cov3D_precomp=cov3D_precomp,
-        derive_normal=derive_normal,
+        cov3D_precomp=cov3D_precomp
     )
+    
+    # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
+    # They will be excluded from value updates used in the splitting criteria.
+    rets =  {"render": rendered_image,
+            "viewspace_points": means2D,
+            "visibility_filter" : radii > 0,
+            "radii": radii,
+    }
 
-    normal_mask = (normal_map != 0).all(0, keepdim=True)
-    normal_from_depth_mask = (normal_map_from_depth != 0).all(0)
-    if pad_normal:
-        opacity_map = torch.where(  # NOTE: a trick to filter out 1 / 255
-            opacity_map < 0.004,
-            torch.zeros_like(opacity_map),
-            opacity_map,
-        )
-        opacity_map = torch.where(  # NOTE: a trick to filter out 1 / 255
-            opacity_map > 1.0 - 0.004,
-            torch.ones_like(opacity_map),
-            opacity_map,
-        )
-        normal_bg = torch.tensor([0.0, 0.0, 1.0], device=normal_map.device)
-        normal_map = normal_map * opacity_map + (1.0 - opacity_map) * normal_bg[:, None, None]
-        mask_from_depth = (normal_map_from_depth == 0.0).all(0, keepdim=True).float()
-        normal_map_from_depth = normal_map_from_depth * (1.0 - mask_from_depth) + mask_from_depth * normal_bg[:, None, None]
+    # additional regularizations
+    render_alpha = allmap[1:2]
 
-    normal_map_from_depth = torch.where(
-        torch.norm(normal_map_from_depth, dim=0, keepdim=True) > 0,
-        F.normalize(normal_map_from_depth, dim=0, p=2),
-        normal_map_from_depth,
-    )
-    normal_map = torch.where(
-        torch.norm(normal_map, dim=0, keepdim=True) > 0,
-        F.normalize(normal_map, dim=0, p=2),
-        normal_map,
-    )
+    # get normal map
+    render_normal = allmap[2:5]
+    render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
+    
+    # get median depth map
+    render_depth_median = allmap[5:6]
+    render_depth_median = torch.nan_to_num(render_depth_median, 0, 0)
+
+    # get expected depth map
+    render_depth_expected = allmap[0:1]
+    render_depth_expected = (render_depth_expected / render_alpha)
+    render_depth_expected = torch.nan_to_num(render_depth_expected, 0, 0)
+    
+    # get depth distortion map
+    render_dist = allmap[6:7]
+
+    # psedo surface attributes
+    # surf depth is either median or expected by setting depth_ratio to 1 or 0
+    # for bounded scene, use median depth, i.e., depth_ratio = 1; 
+    # for unbounded scene, use expected depth, i.e., depth_ration = 0, to reduce disk anliasing.
+    surf_depth = render_depth_expected * (1-pipe.depth_ratio) + (pipe.depth_ratio) * render_depth_median
+    
+    # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
+    surf_normal = depth_to_normal(viewpoint_camera, surf_depth)
+    surf_normal = surf_normal.permute(2,0,1)
+    # remember to multiply with accum_alpha since render_normal is unnormalized.
+    surf_normal = surf_normal * (render_alpha).detach()
+
+    rets.update({
+            'rend_alpha': render_alpha,
+            'rend_normal': render_normal,
+            'rend_dist': render_dist,
+            'surf_depth': surf_depth,
+            'surf_normal': surf_normal,
+    })
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {
-        "render": rendered_image,
-        "viewspace_points": screenspace_points,
-        "visibility_filter": radii > 0,
-        "radii": radii,
-        "opacity_map": opacity_map,
-        "depth_map": depth_map,
-        "normal_map_from_depth": normal_map_from_depth,
-        "normal_from_depth_mask": normal_from_depth_mask,
-        "normal_map": normal_map,
-        "normal_mask": normal_mask,
-        "albedo_map": albedo_map,
-        "roughness_map": roughness_map,
-        "metallic_map": metallic_map,
-    }
+    
+    return rets
+    # return {
+    #     "render": rendered_image,
+    #     "viewspace_points": screenspace_points,
+    #     "visibility_filter": radii > 0,
+    #     "radii": radii,
+    #     "opacity_map": opacity_map,
+    #     "depth_map": depth_map,
+    #     "normal_map_from_depth": normal_map_from_depth,
+    #     "normal_from_depth_mask": normal_from_depth_mask,
+    #     "normal_map": normal_map,
+    #     "normal_mask": normal_mask,
+    #     "albedo_map": albedo_map,
+    #     "roughness_map": roughness_map,
+    #     "metallic_map": metallic_map,
+    # }
