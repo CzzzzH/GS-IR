@@ -206,6 +206,9 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* shs,
 	const float* colors_precomp,
 	const float* opacities,
+	const float* albedo,			// [P, 3]
+	const float* roughness,			// [P, 1]
+	const float* metallic,			// [P, 1]
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -215,7 +218,11 @@ int CudaRasterizer::Rasterizer::forward(
 	const float* cam_pos,
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
+	const bool inference,
 	float* out_color,
+	float* out_albedo,		// [3, H, W]
+	float* out_roughness,	// [1, H, W]
+	float* out_metallic,	// [1, H, W]
 	float* out_others,
 	int* radii,
 	bool debug)
@@ -321,6 +328,9 @@ int CudaRasterizer::Rasterizer::forward(
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
 	const float* transMat_ptr = transMat_precomp != nullptr ? transMat_precomp : geomState.transMat;
+	const float* albedo_ptr = albedo;
+	const float* roughness_ptr = roughness;
+	const float* metallic_ptr = metallic;
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -329,6 +339,9 @@ int CudaRasterizer::Rasterizer::forward(
 		focal_x, focal_y,
 		geomState.means2D,
 		feature_ptr,
+		albedo_ptr,
+		roughness_ptr,
+		metallic_ptr,
 		transMat_ptr,
 		geomState.depths,
 		geomState.normal_opacity,
@@ -336,7 +349,11 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		background,
 		out_color,
-		out_others), debug)
+		out_albedo,
+		out_roughness,
+		out_metallic,
+		out_others,
+		inference), debug)
 
 	return num_rendered;
 }
@@ -350,6 +367,9 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* means3D,
 	const float* shs,
 	const float* colors_precomp,
+	const float* albedo,
+	const float* roughness,
+	const float* metallic,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
@@ -363,10 +383,16 @@ void CudaRasterizer::Rasterizer::backward(
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
+	const float* dL_dpix_albedo,
+	const float* dL_dpix_roughness,
+	const float* dL_dpix_metallic,
 	const float* dL_depths,
 	float* dL_dmean2D,
 	float* dL_dnormal,
 	float* dL_dopacity,
+	float* dL_dalbedo,
+	float* dL_droughness,
+	float* dL_dmetallic,
 	float* dL_dcolor,
 	float* dL_dmean3D,
 	float* dL_dtransMat,
@@ -407,17 +433,27 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.means2D,
 		geomState.normal_opacity,
 		color_ptr,
+		albedo,
+		roughness,
+		metallic,
 		transMat_ptr,
 		depth_ptr,
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		dL_dpix,
+		dL_dpix_albedo,
+		dL_dpix_roughness,
+		dL_dpix_metallic,
 		dL_depths,
 		dL_dtransMat,
 		(float3*)dL_dmean2D,
 		dL_dnormal,
 		dL_dopacity,
-		dL_dcolor), debug)
+		dL_dalbedo,
+		dL_droughness,
+		dL_dmetallic,
+		dL_dcolor
+		), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

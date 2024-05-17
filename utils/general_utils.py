@@ -11,7 +11,8 @@
 
 import random
 from typing import Callable, Sequence
-
+import sys
+from datetime import datetime
 import numpy as np
 import torch
 from PIL import Image
@@ -123,27 +124,61 @@ def build_scaling_rotation(s: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
 
 
 def safe_state(silent: bool, seed: int = 0) -> None:
-    # old_f = sys.stdout
+    old_f = sys.stdout
 
-    # class F:
-    #     def __init__(self, silent):
-    #         self.silent = silent
+    class F:
+        def __init__(self, silent):
+            self.silent = silent
 
-    #     def write(self, x: str) -> None:
-    #         if not self.silent:
-    #             if x.endswith("\n"):
-    #                 old_f.write(
-    #                     x.replace("\n", f" [{str(datetime.now().strftime('%d/%m %H:%M:%S'))}]\n")
-    #                 )
-    #             else:
-    #                 old_f.write(x)
+        def write(self, x: str) -> None:
+            if not self.silent:
+                if x.endswith("\n"):
+                    old_f.write(
+                        x.replace("\n", f" [{str(datetime.now().strftime('%d/%m %H:%M:%S'))}]\n")
+                    )
+                else:
+                    old_f.write(x)
 
-    #     def flush(self) -> None:
-    #         old_f.flush()
+        def flush(self) -> None:
+            old_f.flush()
 
-    # sys.stdout = F(silent)
+    sys.stdout = F(silent)
 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def create_rotation_matrix_from_direction_vector_batch(direction_vectors):
+    # Normalize the batch of direction vectors
+    direction_vectors = direction_vectors / torch.norm(direction_vectors, dim=-1, keepdim=True)
+    # Create a batch of arbitrary vectors that are not collinear with the direction vectors
+    v1 = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32).to(direction_vectors.device).expand(direction_vectors.shape[0], -1).clone()
+    is_collinear = torch.all(torch.abs(direction_vectors - v1) < 1e-5, dim=-1)
+    v1[is_collinear] = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32).to(direction_vectors.device)
+
+    # Calculate the first orthogonal vectors
+    v1 = torch.cross(direction_vectors, v1)
+    v1 = v1 / (torch.norm(v1, dim=-1, keepdim=True))
+    # Calculate the second orthogonal vectors by taking the cross product
+    v2 = torch.cross(direction_vectors, v1)
+    v2 = v2 / (torch.norm(v2, dim=-1, keepdim=True))
+    # Create the batch of rotation matrices with the direction vectors as the last columns
+    rotation_matrices = torch.stack((v1, v2, direction_vectors), dim=-1)
+    return rotation_matrices
+
+def colormap(img, cmap='jet'):
+    import matplotlib.pyplot as plt
+    W, H = img.shape[:2]
+    dpi = 300
+    fig, ax = plt.subplots(1, figsize=(H/dpi, W/dpi), dpi=dpi)
+    im = ax.imshow(img, cmap=cmap)
+    ax.set_axis_off()
+    fig.colorbar(im, ax=ax)
+    fig.tight_layout()
+    fig.canvas.draw()
+    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    img = torch.from_numpy(data / 255.).float().permute(2,0,1)
+    plt.close()
+    return img

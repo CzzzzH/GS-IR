@@ -28,11 +28,6 @@ pip install -r requirements.txt
 install some extensions
 ```sh
 cd gs-ir && python setup.py develop && cd ..
-
-cd submodules
-pip install ./nvdiffrast
-pip install ./simple-knn
-pip install ./diff-surfel-rasterization
 ```
 
 ## Dataset

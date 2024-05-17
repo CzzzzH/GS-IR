@@ -81,22 +81,6 @@ def render(
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
 
-    # raster_settings = GaussianRasterizationSettings(
-    #     image_height=int(viewpoint_camera.image_height),
-    #     image_width=int(viewpoint_camera.image_width),
-    #     tanfovx=tanfovx,
-    #     tanfovy=tanfovy,
-    #     bg=bg_color,
-    #     scale_modifier=scaling_modifier,
-    #     viewmatrix=viewpoint_camera.world_view_transform,
-    #     projmatrix=viewpoint_camera.full_proj_transform,
-    #     sh_degree=pc.active_sh_degree,
-    #     campos=viewpoint_camera.camera_center,
-    #     prefiltered=False,
-    #     debug=pipe.debug,
-    #     inference=inference,
-    #     argmax_depth=False,
-    # )
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
         image_width=int(viewpoint_camera.image_width),
@@ -109,7 +93,8 @@ def render(
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
-        debug=False,
+        debug=pipe.debug,
+        inference=inference
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -146,6 +131,7 @@ def render(
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    pipe.convert_SHs_python = False
     shs = None
     colors_precomp = None
     if override_color is None:
@@ -161,7 +147,7 @@ def render(
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    rendered_image, radii, allmap = rasterizer(
+    rendered_image, radii, albedo_map, roughness_map, metallic_map, allmap = rasterizer(
         means3D=means3D,
         means2D=means2D,
         shs=shs,
@@ -214,12 +200,30 @@ def render(
     # remember to multiply with accum_alpha since render_normal is unnormalized.
     surf_normal = surf_normal * (render_alpha).detach()
 
+    # rets.update({
+    #         'rend_alpha': render_alpha,
+    #         'rend_normal': render_normal,
+    #         'rend_dist': render_dist,
+    #         'surf_depth': surf_depth,
+    #         'surf_normal': surf_normal,
+    # })
+    
+    normal_map = render_normal
+    normal_map_from_depth = surf_normal
+    normal_mask = (normal_map != 0).all(0, keepdim=True)
+    normal_from_depth_mask = (normal_map_from_depth != 0).all(0)
+    
     rets.update({
-            'rend_alpha': render_alpha,
-            'rend_normal': render_normal,
-            'rend_dist': render_dist,
-            'surf_depth': surf_depth,
-            'surf_normal': surf_normal,
+            'opacity_map': render_alpha,
+            'depth_map': surf_depth,
+            'normal_map_from_depth': normal_map_from_depth,
+            'normal_from_depth_mask': normal_from_depth_mask,
+            'normal_map': normal_map,
+            'normal_mask': normal_mask,
+            'albedo_map': albedo_map,
+            'roughness_map': roughness_map,
+            'metallic_map': metallic_map,
+            'dist': render_dist,
     })
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.

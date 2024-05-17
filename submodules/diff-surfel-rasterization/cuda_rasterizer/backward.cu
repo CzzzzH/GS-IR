@@ -152,16 +152,26 @@ renderCUDA(
 	const float4* __restrict__ normal_opacity,
 	const float* __restrict__ transMats,
 	const float* __restrict__ colors,
+	const float* __restrict__ albedo,
+	const float* __restrict__ roughness,
+	const float* __restrict__ metallic,
 	const float* __restrict__ depths,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
+	const float* __restrict__ dL_dpixels_albedo,
+	const float* __restrict__ dL_dpixels_roughness,
+	const float* __restrict__ dL_dpixels_metallic,
 	const float* __restrict__ dL_depths,
 	float * __restrict__ dL_dtransMat,
 	float3* __restrict__ dL_dmean2D,
 	float* __restrict__ dL_dnormal3D,
 	float* __restrict__ dL_dopacity,
-	float* __restrict__ dL_dcolors)
+	float* __restrict__ dL_dalbedo,
+	float* __restrict__ dL_droughness,
+	float* __restrict__ dL_dmetallic,
+	float* __restrict__ dL_dcolors
+	)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -202,6 +212,11 @@ renderCUDA(
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C];
 
+	// PBR
+	float dL_dpixel_albedo[C];
+	float dL_dpixel_roughness;
+	float dL_dpixel_metallic;
+
 #if RENDER_AXUTILITY
 	float dL_dreg;
 	float dL_ddepth;
@@ -215,9 +230,6 @@ renderCUDA(
 		dL_ddepth = dL_depths[DEPTH_OFFSET * H * W + pix_id];
 		dL_daccum = dL_depths[ALPHA_OFFSET * H * W + pix_id];
 		dL_dreg = dL_depths[DISTORTION_OFFSET * H * W + pix_id];
-		for (int i = 0; i < 3; i++) 
-			dL_dnormal2D[i] = dL_depths[(NORMAL_OFFSET + i) * H * W + pix_id];
-
 		dL_dmedian_depth = dL_depths[MIDDEPTH_OFFSET * H * W + pix_id];
 		dL_dmax_dweight = dL_depths[MEDIAN_WEIGHT_OFFSET * H * W + pix_id];
 	}
@@ -236,8 +248,12 @@ renderCUDA(
 #endif
 
 	if (inside){
-		for (int i = 0; i < C; i++)
+		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+			dL_dpixel_albedo[i] = dL_dpixels_albedo[i * H * W + pix_id];
+		}
+		dL_dpixel_roughness = dL_dpixels_roughness[pix_id];
+		dL_dpixel_metallic = dL_dpixels_metallic[pix_id];
 	}
 
 	float last_alpha = 0;
@@ -343,7 +359,13 @@ renderCUDA(
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
+
+				// NOTE: PBR (do not contribute to the alpha/opacity)
+				const float dL_dchannel_albedo = dL_dpixel_albedo[ch];
+				atomicAdd(&(dL_dalbedo[global_id * C + ch]), dchannel_dcolor * dL_dchannel_albedo);
 			}
+			atomicAdd(&(dL_droughness[global_id]), dchannel_dcolor * dL_dpixel_roughness);
+			atomicAdd(&(dL_dmetallic[global_id]), dchannel_dcolor * dL_dpixel_metallic);
 
 			float dL_dz = 0.0f;
 			float dL_dweight = 0;
@@ -718,17 +740,27 @@ void BACKWARD::render(
 	const float2* means2D,
 	const float4* normal_opacity,
 	const float* colors,
+	const float* albedo,
+	const float* roughness,
+	const float* metallic,
 	const float* transMats,
 	const float* depths,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
+	const float* dL_dpixels_albedo,
+	const float* dL_dpixels_roughness,
+	const float* dL_dpixels_metallic,
 	const float* dL_depths,
 	float * dL_dtransMat,
 	float3* dL_dmean2D,
 	float* dL_dnormal3D,
 	float* dL_dopacity,
-	float* dL_dcolors)
+	float* dL_dalbedo,
+	float* dL_droughness,
+	float* dL_dmetallic,
+	float* dL_dcolors
+	)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -740,15 +772,24 @@ void BACKWARD::render(
 		normal_opacity,
 		transMats,
 		colors,
+		albedo,
+		roughness,
+		metallic,
 		depths,
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
+		dL_dpixels_albedo,
+		dL_dpixels_roughness,
+		dL_dpixels_metallic,
 		dL_depths,
 		dL_dtransMat,
 		dL_dmean2D,
 		dL_dnormal3D,
 		dL_dopacity,
+		dL_dalbedo,
+		dL_droughness,
+		dL_dmetallic,
 		dL_dcolors
 		);
 }

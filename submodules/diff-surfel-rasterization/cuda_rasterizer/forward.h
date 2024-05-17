@@ -58,6 +58,9 @@ namespace FORWARD
 		float focal_x, float focal_y,
 		const float2* points_xy_image,
 		const float* features,
+		const float* albedo,
+		const float* roughness,
+		const float* metallic,
 		const float* transMats,
 		const float* depths,
 		const float4* normal_opacity,
@@ -65,7 +68,11 @@ namespace FORWARD
 		uint32_t* n_contrib,
 		const float* bg_color,
 		float* out_color,
-		float* out_others);
+		float* out_albedo,
+		float* out_roughness,
+		float* out_metallic,
+		float* out_others,
+		const bool inference);
 }
 
 

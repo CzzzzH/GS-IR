@@ -259,6 +259,9 @@ renderCUDA(
 	float focal_x, float focal_y,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ albedo,
+	const float* __restrict__ roughness,
+	const float* __restrict__ metallic,
 	const float* __restrict__ transMats,
 	const float* __restrict__ depths,
 	const float4* __restrict__ normal_opacity,
@@ -266,7 +269,11 @@ renderCUDA(
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
-	float* __restrict__ out_others)
+	float* __restrict__ out_albedo,
+	float* __restrict__ out_roughness,
+	float* __restrict__ out_metallic,
+	float* __restrict__ out_others,
+	bool inference)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -300,7 +307,9 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
-
+	float Al[CHANNELS] = { 0.0f };
+	float R = 0.0f;
+	float M = 0.0f;
 
 #if RENDER_AXUTILITY
 	// render axutility ouput
@@ -417,8 +426,13 @@ renderCUDA(
 #endif
 
 			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
+			for (int ch = 0; ch < CHANNELS; ch++) {
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+				Al[ch] += albedo[collected_id[j] * CHANNELS + ch] * alpha * T;
+			}
+			R += roughness[collected_id[j]] * alpha * T;
+			M += metallic[collected_id[j]] * alpha * T;
+
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -433,8 +447,17 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
-		for (int ch = 0; ch < CHANNELS; ch++)
+		for (int ch = 0; ch < CHANNELS; ch++) {
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+			out_albedo[ch * H * W + pix_id] = Al[ch];
+		}
+
+		if (inference) {
+			out_roughness[pix_id] = R + T;
+		} else {
+			out_roughness[pix_id] = R;
+		}
+		out_metallic[pix_id] = M;
 
 #if RENDER_AXUTILITY
 		n_contrib[pix_id + H * W] = median_contributor;
@@ -458,6 +481,9 @@ void FORWARD::render(
 	float focal_x, float focal_y,
 	const float2* means2D,
 	const float* colors,
+	const float* albedo,
+	const float* roughness,
+	const float* metallic,
 	const float* transMats,
 	const float* depths,
 	const float4* normal_opacity,
@@ -465,7 +491,11 @@ void FORWARD::render(
 	uint32_t* n_contrib,
 	const float* bg_color,
 	float* out_color,
-	float* out_others)
+	float* out_albedo,
+	float* out_roughness,
+	float* out_metallic,
+	float* out_others,
+	const bool inference)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -474,6 +504,9 @@ void FORWARD::render(
 		focal_x, focal_y,
 		means2D,
 		colors,
+		albedo,
+		roughness,
+		metallic,
 		transMats,
 		depths,
 		normal_opacity,
@@ -481,7 +514,11 @@ void FORWARD::render(
 		n_contrib,
 		bg_color,
 		out_color,
-		out_others);
+		out_albedo,
+		out_roughness,
+		out_metallic,
+		out_others,
+		inference);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

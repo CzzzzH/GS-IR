@@ -61,6 +61,17 @@ def loadCam(args: GroupParams, id: int, cam_info: CameraInfo, resolution_scale: 
     if resized_image_rgb.shape[0] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
+    # 2DGS
+    if len(cam_info.image.split()) > 3:
+        import torch
+        resized_image_rgb = torch.cat([PILtoTorch(im, resolution) for im in cam_info.image.split()[:3]], dim=0)
+        loaded_mask = PILtoTorch(cam_info.image.split()[3], resolution)
+        gt_image = resized_image_rgb
+    else:
+        resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+        loaded_mask = None
+        gt_image = resized_image_rgb
+
     return Camera(
         colmap_id=cam_info.uid,
         R=cam_info.R,
@@ -82,7 +93,7 @@ def cameraList_from_camInfos(
 
     for id, c in enumerate(tqdm(cam_infos)):
         camera_list.append(loadCam(args, id, c, resolution_scale))
-        break
+        # break
     
     return camera_list
 

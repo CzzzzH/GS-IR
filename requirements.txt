@@ -7,3 +7,6 @@ kornia
 imageio
 lpips
 Ninja
+submodules/nvdiffrast
+submodules/simple-knn
+submodules/diff-surfel-rasterization
