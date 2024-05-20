@@ -264,14 +264,25 @@ def training(
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        # alpha_mask = viewpoint_cam.gt_alpha_mask.cuda()
-        # gt_image = (gt_image * alpha_mask + background[:, None, None] * (1.0 - alpha_mask)).clamp(0.0, 1.0)
+        alpha_mask = viewpoint_cam.gt_alpha_mask.cuda()
+        gt_image = (gt_image * alpha_mask + background[:, None, None] * (1.0 - alpha_mask)).clamp(0.0, 1.0)
         loss: torch.Tensor
         Ll1 = F.l1_loss(image, gt_image)
         normal_loss = 0.0
         
+        # Debug
+        # import os 
+        # import matplotlib.pyplot as plt
+        # os.makedirs("debug", exist_ok=True)
+        # print(image.min(), image.max(), image.mean(), image.std())
+        # print(gt_image.min(), gt_image.max(), gt_image.mean(), gt_image.std())
+        # plt.imsave(f"debug/image.png", (image * 255).to(torch.uint8).permute(1, 2, 0).detach().cpu().numpy())
+        # plt.imsave(f"debug/gt.png", (gt_image * 255).to(torch.uint8).permute(1, 2, 0).detach().cpu().numpy())
+        # image.stop()
+        
         if iteration <= pbr_iteration:
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            # print(loss)
             
             # normal loss
             # normal_loss_weight = 1.0
@@ -785,7 +796,7 @@ if __name__ == "__main__":
         default=[7_000, 30_000, 37_000],
     )
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[30_000])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 15_000, 30_000])
     parser.add_argument("--start_checkpoint", type=str, default=None, help="The path to the checkpoint to load.")
     parser.add_argument("--pbr_iteration", default=30_000, type=int, help="The iteration to begin the pb.r learning (Deomposition Stage in the paper)")
     parser.add_argument("--normal_tv", default=5.0, type=float, help="The weight of TV loss on predicted normal map.")

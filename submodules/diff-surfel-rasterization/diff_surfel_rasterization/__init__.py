@@ -147,12 +147,29 @@ class _RasterizeGaussians(torch.autograd.Function):
         raster_settings = ctx.raster_settings
         colors_precomp, albedo, roughness, metallic, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
 
-        # print("grad_out_albedo", grad_out_albedo.shape, grad_out_albedo.dtype)
-        # print("grad_out_roughness", grad_out_roughness.shape, grad_out_roughness.dtype)
-        # print("grad_out_metallic", grad_out_metallic.shape, grad_out_metallic.dtype)
-        # print("albedo", albedo.shape, albedo.dtype)
-        # print("roughness", roughness.shape, roughness.dtype)
-        # print("metallic", metallic.shape, metallic.dtype)
+        # print(f"num_rendered {num_rendered}")
+        # print(f"grad_out_color {grad_out_color.shape} {grad_out_color.min()} {grad_out_color.max()} {grad_out_color.mean()} {grad_out_color.std()}")
+        # grad_depth_no_nan = torch.where(torch.isnan(grad_depth), torch.zeros_like(grad_depth), grad_depth)
+        # print(f"grad_depth {grad_depth_no_nan.shape} {grad_depth_no_nan.min()} {grad_depth_no_nan.max()} {grad_depth_no_nan.mean()} {grad_depth_no_nan.std()}")
+        # print(f"colors_precomp {colors_precomp}")
+        # print(f"means3D {means3D.shape} {means3D.min()} {means3D.max()} {means3D.mean()} {means3D.std()}")
+        # print(f"scales {scales.shape} {scales.min()} {scales.max()} {scales.mean()} {scales.std()}")
+        # print(f"rotations {rotations.shape} {rotations.min()} {rotations.max()} {rotations.mean()} {rotations.std()}")
+        # print(f"radii {radii.shape} {radii.min()} {radii.max()} {radii.float().mean()} {radii.float().std()}")
+        # print(f"sh {sh.shape} {sh.min()} {sh.max()} {sh.mean()} {sh.std()}")
+        # print(f"geomBuffer {geomBuffer.shape} {geomBuffer.min()} {geomBuffer.max()} {geomBuffer.float().mean()} {geomBuffer.float().std()}")
+        # print(f"binningBuffer {binningBuffer.shape} {binningBuffer.min()} {binningBuffer.max()} {binningBuffer.float().mean()} {binningBuffer.float().std()}")
+        # print(f"imgBuffer {imgBuffer.shape} {imgBuffer.min()} {imgBuffer.max()} {imgBuffer.float().mean()} {imgBuffer.float().std()}")
+        
+        # print("Rasterize Settings:")
+        # print(f"bg {raster_settings.bg.shape} {raster_settings.bg.min()} {raster_settings.bg.max()} {raster_settings.bg.mean()} {raster_settings.bg.std()}")
+        # print(f"scale_modifier {raster_settings.scale_modifier}")
+        # print(f"viewmatrix {raster_settings.viewmatrix.min()} {raster_settings.viewmatrix.max()} {raster_settings.viewmatrix.mean()} {raster_settings.viewmatrix.std()}")
+        # print(f"projmatrix {raster_settings.projmatrix.min()} {raster_settings.projmatrix.max()} {raster_settings.projmatrix.mean()} {raster_settings.projmatrix.std()}")
+        # print(f"tanfovx {raster_settings.tanfovx}")
+        # print(f"tanfovy {raster_settings.tanfovy}")
+        # print(f"sh_degree {raster_settings.sh_degree}")
+        # print(f"campos {raster_settings.campos.shape} {raster_settings.campos.min()} {raster_settings.campos.max()} {raster_settings.campos.mean()} {raster_settings.campos.std()}")
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
@@ -196,18 +213,6 @@ class _RasterizeGaussians(torch.autograd.Function):
         else:
              grad_means2D, grad_colors_precomp, grad_opacities, grad_albedo, grad_roughness, grad_metallic, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
 
-        # print("grad_means2D", grad_means2D.shape, grad_means2D.dtype)
-        # print("grad_colors_precomp", grad_colors_precomp.shape, grad_colors_precomp.dtype)
-        # print("grad_opacities", grad_opacities.shape, grad_opacities.dtype)
-        # print("grad_albedo", grad_albedo.shape, grad_albedo.dtype)
-        # print("grad_roughness", grad_roughness.shape, grad_roughness.dtype)
-        # print("grad_metallic", grad_metallic.shape, grad_metallic.dtype)
-        # print("grad_means3D", grad_means3D.shape, grad_means3D.dtype)
-        # print("grad_cov3Ds_precomp", grad_cov3Ds_precomp.shape, grad_cov3Ds_precomp.dtype)
-        # print("grad_sh", grad_sh.shape, grad_sh.dtype)
-        # print("grad_scales", grad_scales.shape, grad_scales.dtype)
-        # print("grad_rotations", grad_rotations.shape, grad_rotations.dtype)
-
         grads = (
             grad_means3D,
             grad_means2D,
@@ -222,6 +227,19 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_cov3Ds_precomp,
             None,
         )
+        
+        # print(f"grad_means3D {grad_means3D.shape} {grad_means3D.min()} {grad_means3D.max()} {grad_means3D.mean()} {grad_means3D.std()}")
+        # print(f"grad_means2D {grad_means2D.shape} {grad_means2D.min()} {grad_means2D.max()} {grad_means2D.mean()} {grad_means2D.std()}")
+        # print(f"grad_sh {grad_sh.shape} {grad_sh.min()} {grad_sh.max()} {grad_sh.mean()} {grad_sh.std()}")
+        # print(f"grad_colors_precomp {grad_colors_precomp.shape} {grad_colors_precomp.min()} {grad_colors_precomp.max()} {grad_colors_precomp.mean()} {grad_colors_precomp.std()}")
+        # print(f"grad_opacities {grad_opacities.shape}  {grad_opacities.min()} {grad_opacities.max()} {grad_opacities.mean()} {grad_opacities.std()}")
+        # print(f"grad_albedo {grad_albedo.shape} {grad_albedo.min()} {grad_albedo.max()} {grad_albedo.mean()} {grad_albedo.std()}")
+        # print(f"grad_roughness {grad_roughness.shape} {grad_roughness.min()} {grad_roughness.max()} {grad_roughness.mean()} {grad_roughness.std()}")
+        # print(f"grad_metallic {grad_metallic.shape} {grad_metallic.min()} {grad_metallic.max()} {grad_metallic.mean()} {grad_metallic.std()}")
+        # print(f"grad_scales {grad_scales.shape} {grad_scales.min()} {grad_scales.max()} {grad_scales.mean()} {grad_scales.std()}")
+        # print(f"grad_rotations {grad_rotations.shape} {grad_rotations.min()} {grad_rotations.max()} {grad_rotations.mean()} {grad_rotations.std()}")
+        # print(f"grad_cov3Ds_precomp {grad_cov3Ds_precomp.shape} {grad_cov3Ds_precomp.min()} {grad_cov3Ds_precomp.max()} {grad_cov3Ds_precomp.mean()} {grad_cov3Ds_precomp.std()}")
+        # grads.stop()
 
         return grads
     

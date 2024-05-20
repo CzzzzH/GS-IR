@@ -161,15 +161,11 @@ class GaussianModel:
             opt_dict,
             self.spatial_lr_scale,
         ) = model_args
-        # if training_args is not None:
-        #     self.training_setup(training_args)
-        #     self.xyz_gradient_accum = xyz_gradient_accum
-        #     self.denom = denom
-        #     self.optimizer.load_state_dict(opt_dict)
-        self.training_setup(training_args)
-        self.xyz_gradient_accum = xyz_gradient_accum
-        self.denom = denom
-        self.optimizer.load_state_dict(opt_dict)
+        if training_args is not None:
+            self.training_setup(training_args)
+            self.xyz_gradient_accum = xyz_gradient_accum
+            self.denom = denom
+            self.optimizer.load_state_dict(opt_dict)
         
     @property
     def get_scaling(self) -> torch.Tensor:

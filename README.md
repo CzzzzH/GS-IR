@@ -39,6 +39,7 @@ Please refer to the [TensoIR](https://github.com/Haian-Jin/TensoIR?tab=readme-ov
 Take the `lego` case as an example.
 
 **Stage1 (Initial Stage)**
+
 ```sh
 python train.py \
 -m outputs/lego/ \
@@ -46,8 +47,19 @@ python train.py \
 --iterations 30000 \
 --eval
 ```
+**Stage1 Evaluation (without PBR features)**
+
+```
+python render.py \
+-m outputs/lego \
+-s datasets/TensoIR/lego/ \
+--checkpoint outputs/lego/chkpnt30000.pth \
+--eval \
+--skip_train
+```
 
 **Baking**
+
 ```sh
 python baking.py \
 -m outputs/lego/ \
