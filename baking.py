@@ -11,7 +11,7 @@ import nvdiffrast.torch as dr
 import torch
 import torch.nn.functional as F
 from tqdm import trange
-from diff_gaussian_rasterization import _C
+from diff_surfel_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from gs_ir import _C as gs_ir_ext
 
 from arguments import ModelParams, PipelineParams, get_combined_args
@@ -285,7 +285,6 @@ if __name__ == "__main__":
             quat = torch.cat(torch.where(occlusion_ids == grid_id))
             position = positions[(quat[0] * args.occlu_res**2 + quat[1] * args.occlu_res + quat[2],)]
             # position = torch.tensor([0.0, 1.5, 0.0]).to(position.device)
-            rgb_cubemap = []
             opacity_cubemap = []
             depth_cubemap = []
             # NOTE: crop by position
@@ -309,32 +308,62 @@ if __name__ == "__main__":
                 ).squeeze(0)
                 camera_center = world_view_transform.inverse()[3, :3]
 
-                input_args = (
-                    bg_color,
-                    # bg_colors[r_idx],
-                    valid_means3D,
-                    torch.Tensor([]),
-                    valid_opacity,
-                    valid_scales,
-                    valid_rots,
-                    torch.Tensor([]),
-                    shs,
-                    camera_center,  # campos,
-                    world_view_transform,  # viewmatrix,
-                    full_proj_transform,  # projmatrix,
-                    1.0,  # scale_modifier
-                    1.0,  # tanfovx,
-                    1.0,  # tanfovy,
-                    res,  # image_height,
-                    res,  # image_width,
-                    gaussians.active_sh_degree,
-                    False,  # prefiltered,
-                    False,  # argmax_depth,
+                
+                raster_settings = GaussianRasterizationSettings(
+                    image_height=res,
+                    image_width=res,
+                    tanfovx=1.0,
+                    tanfovy=1.0,
+                    bg=bg_color,
+                    scale_modifier=1.0,
+                    viewmatrix=world_view_transform,
+                    projmatrix=full_proj_transform,
+                    sh_degree=gaussians.active_sh_degree,
+                    campos=camera_center,
+                    prefiltered=False,
+                    debug=False,
+                    inference=True
                 )
-                (num_rendered, rendered_image, opacity_map, radii, depth_map) = _C.lite_rasterize_gaussians(
-                    *input_args
+                
+                rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+                
+                
+                # Rasterize visible Gaussians to image, obtain their radii (on screen).
+                rendered_image, radii, albedo_map, roughness_map, metallic_map, allmap = rasterizer(
+                    means3D=valid_means3D,
+                    means2D=valid_means2D,
+                    shs=valid_shs,
+                    colors_precomp=None,
+                    opacities=valid_opacity,
+                    albedo=torch.zeros_like(valid_opacity).repeat(3, 1),
+                    roughness=torch.zeros_like(valid_opacity),
+                    metallic=torch.zeros_like(valid_opacity),
+                    scales=valid_scales,
+                    rotations=valid_rots,
+                    cov3D_precomp=None
                 )
-                rgb_cubemap.append(rendered_image.permute(1, 2, 0))
+                
+                # additional regularizations
+                render_alpha = allmap[1:2]
+                
+                # get median depth map
+                render_depth_median = allmap[5:6]
+                render_depth_median = torch.nan_to_num(render_depth_median, 0, 0)
+
+                # get expected depth map
+                render_depth_expected = allmap[0:1]
+                render_depth_expected = (render_depth_expected / render_alpha)
+                render_depth_expected = torch.nan_to_num(render_depth_expected, 0, 0)
+                
+                # psedo surface attributes
+                # surf depth is either median or expected by setting depth_ratio to 1 or 0
+                # for bounded scene, use median depth, i.e., depth_ratio = 1; 
+                # for unbounded scene, use expected depth, i.e., depth_ration = 0, to reduce disk anliasing.
+                surf_depth = render_depth_expected * (1-pipeline.depth_ratio) + (pipeline.depth_ratio) * render_depth_median
+                
+                opacity_map = render_alpha
+                depth_map = surf_depth
+                
                 opacity_cubemap.append(opacity_map.permute(1, 2, 0))
                 depth_map = depth_map * (opacity_map > 0.5).float()  # NOTE: import to filter out the floater
                 depth_cubemap.append(depth_map.permute(1, 2, 0) * norm)

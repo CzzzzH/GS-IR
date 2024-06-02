@@ -155,6 +155,11 @@ def training(
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
 
+    ema_brdf_for_log = 0.0
+    ema_env_for_log = 0.0
+    ema_lamb_for_log = 0.0
+    
+    
     # NOTE: prepare for PBR
     brdf_lut = get_brdf_lut().cuda()
     envmap_dirs = get_envmap_dirs()
@@ -266,7 +271,13 @@ def training(
         gt_image = viewpoint_cam.original_image.cuda()
         alpha_mask = viewpoint_cam.gt_alpha_mask.cuda()
         gt_image = (gt_image * alpha_mask + background[:, None, None] * (1.0 - alpha_mask)).clamp(0.0, 1.0)
+        normal_map = (normal_map * alpha_mask + background[:, None, None] * (1.0 - alpha_mask))
+        normal_map_from_depth = (normal_map_from_depth * alpha_mask + background[:, None, None] * (1.0 - alpha_mask))
+        albedo_map = (albedo_map * alpha_mask + background[:, None, None] * (1.0 - alpha_mask))
+        roughness_map = (roughness_map * alpha_mask + background[0, None, None] * (1.0 - alpha_mask))
+        metallic_map = (metallic_map * alpha_mask + background[0, None, None] * (1.0 - alpha_mask))
         loss: torch.Tensor
+
         Ll1 = F.l1_loss(image, gt_image)
         normal_loss = 0.0
         
@@ -341,7 +352,7 @@ def training(
                 occlusion = torch.ones_like(roughness_map).permute(1, 2, 0)  # [H, W, 1]
                 irradiance = torch.zeros_like(roughness_map).permute(1, 2, 0)  # [H, W, 1]
 
-            normal_mask = rendering_result["normal_mask"]  # [1, H, W]
+            normal_mask = alpha_mask.bool()  # [1, H, W]
             cubemap.build_mips() # build mip for environment light
             pbr_result = pbr_shading(
                 light=cubemap,
@@ -380,10 +391,12 @@ def training(
                     pad=1,  # FIXME: 8 for scene
                     step=1,
                 )
-            loss += brdf_tv_loss * brdf_tv_weight
+            brdf_tv_loss = brdf_tv_loss * brdf_tv_weight
+            loss += brdf_tv_loss 
             lamb_weight = 0.001
             lamb_loss = (1.0 - roughness_map[normal_mask]).mean() + metallic_map[normal_mask].mean()
-            loss += lamb_loss * lamb_weight
+            lamb_loss = lamb_loss * lamb_weight
+            loss += lamb_loss 
 
             #### envmap
             # TV smoothness
@@ -397,8 +410,8 @@ def training(
             ]  # [H, W, 3]
             tv_h1 = torch.pow(envmap[1:, :, :] - envmap[:-1, :, :], 2).mean()
             tv_w1 = torch.pow(envmap[:, 1:, :] - envmap[:, :-1, :], 2).mean()
-            env_tv_loss = tv_h1 + tv_w1
-            loss += env_tv_loss * env_tv_weight
+            env_tv_loss = (tv_h1 + tv_w1) * env_tv_weight
+            loss += env_tv_loss 
 
         loss.backward()
 
@@ -407,21 +420,39 @@ def training(
         with torch.no_grad():
             
             # Progress bar
-            ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
-            ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
-            ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-            
-            if iteration % 10 == 0:
-                loss_dict = {
-                    "Loss": f"{ema_loss_for_log:.{5}f}",
-                    "distort": f"{ema_dist_for_log:.{5}f}",
-                    "normal": f"{ema_normal_for_log:.{5}f}",
-                    "Points": f"{len(gaussians.get_xyz)}"
-                }
-                progress_bar.set_postfix(loss_dict)
-                progress_bar.update(10)
-            if iteration == opt.iterations:
-                progress_bar.close()
+            if iteration<= pbr_iteration:
+                ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+                ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
+                ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
+                
+                if iteration % 10 == 0:
+                    loss_dict = {
+                        "Loss": f"{ema_loss_for_log:.{5}f}",
+                        "distort": f"{ema_dist_for_log:.{5}f}",
+                        "normal": f"{ema_normal_for_log:.{5}f}",
+                        "Points": f"{len(gaussians.get_xyz)}"
+                    }
+                    progress_bar.set_postfix(loss_dict)
+                    progress_bar.update(10)
+                if iteration == opt.iterations:
+                    progress_bar.close()
+            else:
+                ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+                ema_brdf_for_log = 0.4 * brdf_tv_loss.item() + 0.6 * ema_brdf_for_log
+                ema_env_for_log = 0.4 * env_tv_loss.item() + 0.6 * ema_env_for_log
+                ema_lamb_for_log = 0.4 * lamb_loss.item() + 0.6 * ema_lamb_for_log
+                if iteration % 10 == 0:
+                    loss_dict = {
+                        "Loss": f"{ema_loss_for_log:.{5}f}",
+                        "BRDF": f"{ema_brdf_for_log:.{5}f}",
+                        "Env": f"{ema_env_for_log:.{5}f}",
+                        "Lamb": f"{ema_lamb_for_log:.{5}f}",
+                        "Points": f"{len(gaussians.get_xyz)}"
+                    }
+                    progress_bar.set_postfix(loss_dict)
+                    progress_bar.update(10)
+                if iteration == opt.iterations:
+                    progress_bar.close()
 
             # Log and save
             training_report(
@@ -587,8 +618,9 @@ def training_report(
                         inference=True,
                         derive_normal=True,
                     )
-                    image = torch.clamp(render_result["render"], 0.0, 1.0)
-                    depth_map = render_result["depth_map"]
+                    image = torch.clamp(render_result["render"], 0.0, 1.0)                     
+                    alpha_mask = viewpoint.gt_alpha_mask.cuda()
+                    depth_map = render_result["depth_map"] 
                     depth_img = (
                         torch.from_numpy(
                             turbo_cmap(render_result["depth_map"].cpu().numpy().squeeze())
@@ -596,11 +628,14 @@ def training_report(
                         .to(image.device)
                         .permute(2, 0, 1)
                     )
+                    # depth_img = (depth_img * alpha_mask + background[:, None, None] * (1.0 - alpha_mask))
+                    # normal_map_from_depth = (render_result["normal_map_from_depth"] * alpha_mask+ background[:, None, None] * (1.0 - alpha_mask))
+                    # normal_map = (render_result["normal_map"]* alpha_mask+ background[:, None, None] * (1.0 - alpha_mask))
                     normal_map_from_depth = render_result["normal_map_from_depth"]
                     normal_map = render_result["normal_map"]
                     normal_img = torch.cat([normal_map, normal_map_from_depth], dim=-1)
+                    
                     gt_image = viewpoint.original_image.cuda()
-                    alpha_mask = viewpoint.gt_alpha_mask.cuda()
                     gt_image = (gt_image * alpha_mask + background[:, None, None] * (1.0 - alpha_mask)).clamp(0.0, 1.0)
                     albedo_map = render_result["albedo_map"]  # [3, H, W]
                     roughness_map = render_result["roughness_map"]  # [1, H, W]
@@ -787,13 +822,13 @@ if __name__ == "__main__":
         "--test_iterations",
         nargs="+",
         type=int,
-        default=[7_000, 30_000, 37_000],
+        default=[3000,7_000,10000,20000, 30_000],
     )
     parser.add_argument(
         "--save_iterations",
         nargs="+",
         type=int,
-        default=[7_000, 30_000, 37_000],
+        default=[3000,7_000,10000,20000, 30_000],
     )
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 15_000, 30_000])
