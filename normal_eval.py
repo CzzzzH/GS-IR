@@ -51,8 +51,9 @@ if __name__ == "__main__":
         normal_gs = np.array(normal_gs_img)[..., :3] / 255  # [H, W, 3] in range [0, 1]
         normal_gs = (normal_gs - 0.5) * 2.0  # [H, W, 3] in range (-1, 1)
         # NOTE: a trick to tackle (128 / 255)
-        mask = (np.array(normal_gs_img)[..., :3] == np.array([128, 128, 255], dtype=np.uint8)).all(-1)
-        normal_gs[mask] = np.array([0.0, 0.0, 1.0])
+        # mask = (np.array(normal_gs_img)[..., :3] == np.array([128, 128, 255], dtype=np.uint8)).all(-1)
+        # normal_gs[mask] = np.array([0.0, 0.0, 1.0])
+        normal_gs = normal_gs * alpha_mask + normal_bg * (1.0 - alpha_mask)  # [H, W, 3]
         normal_gs = normal_gs / np.linalg.norm(normal_gs, axis=-1, ord=2, keepdims=True)
         normal_gs_stack.append(normal_gs)
 
@@ -64,8 +65,9 @@ if __name__ == "__main__":
         )  # [H, W, 3] in range [0, 1]
         normal_from_depth = (normal_from_depth - 0.5) * 2.0  # [H, W, 3] in range (-1, 1)
         # mask_from_depth = (normal_from_depth == 0).all(-1)
-        mask = (np.array(normal_from_depth_img)[..., :3] == np.array([128, 128, 255], dtype=np.uint8)).all(-1)
-        normal_from_depth[mask] = np.array([0.0, 0.0, 1.0])
+        # mask = (np.array(normal_from_depth_img)[..., :3] == np.array([128, 128, 255], dtype=np.uint8)).all(-1)
+        # normal_from_depth[mask] = np.array([0.0, 0.0, 1.0])
+        normal_from_depth = normal_from_depth * alpha_mask + normal_bg * (1.0 - alpha_mask)
         normal_from_depth = normal_from_depth / np.linalg.norm(
             normal_from_depth, axis=-1, ord=2, keepdims=True
         )
