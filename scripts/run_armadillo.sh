@@ -2,7 +2,9 @@ python train.py \
 -m outputs/armadillo/ \
 -s datasets/TensoIR/armadillo/ \
 --iterations 30000 \
---eval
+--eval \
+--lambda_normal 0.005 \
+--densify_grad_threshold 0.00005 
 
 python baking.py \
 -m outputs/armadillo/ \

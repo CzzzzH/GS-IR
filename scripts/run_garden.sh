@@ -4,6 +4,8 @@ python train.py \
 --iterations 30000 \
 -i images_4 \
 -r 1 \
+--lambda_normal 0.03 \
+--densify_grad_threshold 0.0002
 
 python baking.py \
 -m outputs/garden/ \

@@ -2,7 +2,9 @@ python train.py \
 -m outputs/lego/ \
 -s datasets/TensoIR/lego/ \
 --iterations 30000 \
---eval
+--eval \
+--lambda_normal 0.03 \
+--densify_grad_threshold 0.0001
 
 python baking.py \
 -m outputs/lego/ \
